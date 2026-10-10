@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Anagram Wheel</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Anagram">
+<meta name="theme-color" content="#14161a">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<style>
+  :root {
+    --bg: #14161a;
+    --tile: #f3ead8;
+    --tile-ink: #1d1f24;
+    --accent: #c9a24a;
+    --muted: #8a8f99;
+    --field: #23262d;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: #eee; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+    min-height: 100dvh; overflow: hidden; user-select: none; -webkit-user-select: none;
+  }
+  main { width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: center; gap: 28px; }
+  #wheel { position: relative; width: min(88vw, 380px); aspect-ratio: 1; }
+  #wheel::before {
+    content: ""; position: absolute; inset: 12%; border-radius: 50%;
+    border: 1px dashed rgba(201,162,74,.25);
+  }
+  .empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 15px; text-align: center; padding: 25%;
+  }
+  .tile {
+    position: absolute; left: 0; top: 0; border-radius: 50%;
+    background: var(--tile); color: var(--tile-ink); font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 3px 8px rgba(0,0,0,.45);
+    transition: transform .45s cubic-bezier(.5,0,.2,1);
+  }
+  input {
+    width: 100%; font-size: 22px; letter-spacing: .18em; text-transform: uppercase; text-align: center;
+    padding: 14px 12px; border-radius: 14px; border: 1px solid #333842;
+    background: var(--field); color: #fff; outline: none; user-select: text; -webkit-user-select: text;
+  }
+  input:focus { border-color: var(--accent); }
+  input::placeholder { letter-spacing: normal; text-transform: none; color: var(--muted); font-size: 17px; }
+  .buttons { display: flex; gap: 12px; width: 100%; }
+  button {
+    flex: 1; font-size: 18px; font-weight: 600; padding: 15px; border-radius: 14px; border: 0;
+    font-family: inherit;
+  }
+  #shuffle { flex: 2; background: var(--accent); color: #1a1a1a; }
+  #clear { background: var(--field); color: #ddd; }
+  button:active { transform: scale(.97); }
+  button:disabled { opacity: .4; }
+</style>
+</head>
+<body>
+<main>
+  <div id="wheel"></div>
+  <input id="letters" type="text" inputmode="text" autocomplete="off" autocorrect="off"
+         autocapitalize="characters" spellcheck="false" maxlength="30" placeholder="Type your letters">
+  <div class="buttons">
+    <button id="shuffle" disabled>Shuffle</button>
+    <button id="clear">Clear</button>
+  </div>
+</main>
+<script>
+  const wheel = document.getElementById('wheel');
+  const input = document.getElementById('letters');
+  const shuffleBtn = document.getElementById('shuffle');
+  const clearBtn = document.getElementById('clear');
+  let tiles = [];   // each: { el, ch, slot }
+
+  function save(v) { try { localStorage.setItem('letters', v); } catch (e) {} }
+  function load() { try { return localStorage.getItem('letters') || ''; } catch (e) { return ''; } }
+
+  function render(text) {
+    wheel.querySelectorAll('.tile, .empty').forEach(n => n.remove());
+    tiles = [...text].map((ch, i) => {
+      const el = document.createElement('div');
+      el.className = 'tile';
+      el.textContent = ch;
+      el.style.transition = 'none';
+      wheel.appendChild(el);
+      return { el, ch, slot: i };
+    });
+    if (!tiles.length) {
+      const e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = 'Letters appear here';
+      wheel.appendChild(e);
+    }
+    shuffleBtn.disabled = tiles.length < 2;
+    layout();
+    requestAnimationFrame(() => requestAnimationFrame(() =>
+      tiles.forEach(t => t.el.style.transition = '')));
+  }
+
+  function layout() {
+    const n = tiles.length;
+    if (!n) return;
+    const S = wheel.clientWidth;
+    const c = (0.85 * 2 * Math.PI) / Math.max(n, 3);
+    const t = Math.min(S * 0.2, (c * S / 2) / (1 + c / 2));
+    const R = n === 1 ? 0 : S / 2 - t / 2 - 2;
+    tiles.forEach(tile => {
+      const a = -Math.PI / 2 + tile.slot * 2 * Math.PI / n;
+      const x = S / 2 + R * Math.cos(a) - t / 2;
+      const y = S / 2 + R * Math.sin(a) - t / 2;
+      tile.el.style.width = tile.el.style.height = t + 'px';
+      tile.el.style.fontSize = (t * 0.5) + 'px';
+      tile.el.style.transform = `translate(${x}px, ${y}px)`;
+    });
+  }
+
+  function sequence() {
+    const s = [];
+    tiles.forEach(t => s[t.slot] = t.ch);
+    return s.join('');
+  }
+
+  function shuffle() {
+    const n = tiles.length;
+    if (n < 2) return;
+    const before = sequence();
+    const allSame = new Set(tiles.map(t => t.ch)).size === 1;
+    let tries = 0;
+    do {
+      const slots = [...Array(n).keys()];
+      for (let i = n - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [slots[i], slots[j]] = [slots[j], slots[i]];
+      }
+      tiles.forEach((t, i) => t.slot = slots[i]);
+      tries++;
+    } while (!allSame && sequence() === before && tries < 50);
+    layout();
+  }
+
+  input.addEventListener('input', () => {
+    const clean = input.value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 30);
+    if (input.value !== clean) input.value = clean;
+    save(clean);
+    render(clean);
+  });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
+  shuffleBtn.addEventListener('click', () => { input.blur(); shuffle(); });
+  clearBtn.addEventListener('click', () => { input.value = ''; save(''); render(''); input.focus(); });
+  window.addEventListener('resize', layout);
+
+  input.value = load();
+  render(input.value);
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+  }
+</script>
+</body>
+</html>
