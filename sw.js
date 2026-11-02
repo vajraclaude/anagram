@@ -1,4 +1,4 @@
-const CACHE = 'anagram-v1';
+const CACHE = 'anagram-v2';
 const ASSETS = [
   './',
   './index.html',

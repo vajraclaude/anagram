@@ -19,32 +19,54 @@
     --accent: #c9a24a;
     --muted: #8a8f99;
     --field: #23262d;
+    --line: #3a3f49;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: #eee; }
+  html, body { margin: 0; background: var(--bg); color: #eee; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
-    min-height: 100dvh; overflow: hidden; user-select: none; -webkit-user-select: none;
+    padding: calc(env(safe-area-inset-top) + 12px) 16px calc(env(safe-area-inset-bottom) + 12px);
+    min-height: 100dvh; user-select: none; -webkit-user-select: none;
   }
-  main { width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: center; gap: 28px; }
-  #wheel { position: relative; width: min(88vw, 380px); aspect-ratio: 1; }
+  main { width: 100%; max-width: 420px; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+
+  #wheel { position: relative; width: min(80vw, 340px); aspect-ratio: 1; }
   #wheel::before {
     content: ""; position: absolute; inset: 12%; border-radius: 50%;
     border: 1px dashed rgba(201,162,74,.25);
   }
-  .empty {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    color: var(--muted); font-size: 15px; text-align: center; padding: 25%;
+  #centre {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; pointer-events: none; text-align: center;
   }
+  #centre b { font-size: 46px; line-height: 1; color: var(--accent); font-weight: 700; }
+  #centre span { font-size: 13px; color: var(--muted); margin-top: 4px; letter-spacing: .04em; }
+  #centre .empty { font-size: 15px; color: var(--muted); padding: 0 25%; }
+
   .tile {
     position: absolute; left: 0; top: 0; border-radius: 50%;
     background: var(--tile); color: var(--tile-ink); font-weight: 700;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 3px 8px rgba(0,0,0,.45);
-    transition: transform .45s cubic-bezier(.5,0,.2,1);
+    box-shadow: 0 3px 8px rgba(0,0,0,.45); cursor: pointer;
+    transition: transform .45s cubic-bezier(.5,0,.2,1), width .3s, height .3s, font-size .3s;
   }
+  .tile.new { transition: none; }
+  .armed .tile { box-shadow: 0 0 0 2px var(--accent), 0 3px 8px rgba(0,0,0,.45); }
+
+  #slots { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; width: 100%; min-height: 10px; }
+  .slot {
+    border-radius: 8px; border: 1.5px dashed var(--line); background: transparent;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; color: var(--tile-ink); cursor: pointer;
+  }
+  .slot.filled { background: var(--tile); border: 1.5px solid var(--tile); }
+  .slot.sel { border: 2px solid var(--accent); background: rgba(201,162,74,.15); }
+  .slot.filled.sel { background: var(--tile); }
+
+  #hint { font-size: 13px; color: var(--muted); text-align: center; min-height: 18px; margin-top: -8px; transition: color .2s; }
+  #hint.flash { color: var(--accent); }
+
   input {
     width: 100%; font-size: 22px; letter-spacing: .18em; text-transform: uppercase; text-align: center;
     padding: 14px 12px; border-radius: 14px; border: 1px solid #333842;
@@ -65,7 +87,9 @@
 </head>
 <body>
 <main>
-  <div id="wheel"></div>
+  <div id="wheel"><div id="centre"></div></div>
+  <div id="slots"></div>
+  <div id="hint"></div>
   <input id="letters" type="text" inputmode="text" autocomplete="off" autocorrect="off"
          autocapitalize="characters" spellcheck="false" maxlength="30" placeholder="Type your letters">
   <div class="buttons">
@@ -75,92 +99,206 @@
 </main>
 <script>
   const wheel = document.getElementById('wheel');
+  const centre = document.getElementById('centre');
+  const slotsEl = document.getElementById('slots');
+  const hint = document.getElementById('hint');
   const input = document.getElementById('letters');
   const shuffleBtn = document.getElementById('shuffle');
   const clearBtn = document.getElementById('clear');
-  let tiles = [];   // each: { el, ch, slot }
 
-  function save(v) { try { localStorage.setItem('letters', v); } catch (e) {} }
-  function load() { try { return localStorage.getItem('letters') || ''; } catch (e) { return ''; } }
+  // letters: the full set typed; placed: known answer positions ('' = unknown);
+  // pool: letters still in the wheel, in display order; sel: selected answer box
+  let letters = '', placed = [], pool = [], sel = -1, nextId = 1;
+  const els = new Map();
 
-  function render(text) {
-    wheel.querySelectorAll('.tile, .empty').forEach(n => n.remove());
-    tiles = [...text].map((ch, i) => {
-      const el = document.createElement('div');
-      el.className = 'tile';
-      el.textContent = ch;
-      el.style.transition = 'none';
-      wheel.appendChild(el);
-      return { el, ch, slot: i };
+  function counts(arr) {
+    const c = {};
+    for (const ch of arr) if (ch) c[ch] = (c[ch] || 0) + 1;
+    return c;
+  }
+
+  function save() {
+    try {
+      localStorage.setItem('anagram-state', JSON.stringify({
+        letters, placed, pool: pool.map(t => t.ch)
+      }));
+    } catch (e) {}
+  }
+
+  function load() {
+    try {
+      const s = JSON.parse(localStorage.getItem('anagram-state') || 'null');
+      if (s && typeof s.letters === 'string') return s;
+      const old = localStorage.getItem('letters');
+      if (old) return { letters: old, placed: [], pool: [...old] };
+    } catch (e) {}
+    return { letters: '', placed: [], pool: [] };
+  }
+
+  // Rebuild placed and pool for a new letter set, keeping whatever still fits.
+  function setLetters(text, prevPlaced, prevPool) {
+    letters = text;
+    const n = letters.length;
+    const avail = counts([...letters]);
+    placed = Array.from({ length: n }, (_, i) => {
+      const ch = prevPlaced[i] || '';
+      if (ch && avail[ch] > 0) { avail[ch]--; return ch; }
+      return '';
     });
-    if (!tiles.length) {
-      const e = document.createElement('div');
-      e.className = 'empty';
-      e.textContent = 'Letters appear here';
-      wheel.appendChild(e);
+    const kept = [];
+    for (const t of prevPool) {
+      if (avail[t.ch] > 0) { avail[t.ch]--; kept.push(t); }
     }
-    shuffleBtn.disabled = tiles.length < 2;
+    for (const ch of letters) {
+      if (avail[ch] > 0) { avail[ch]--; kept.push({ id: nextId++, ch }); }
+    }
+    pool = kept;
+    if (sel >= n) sel = -1;
+  }
+
+  function render() {
+    const n = letters.length;
+
+    // Centre count
+    if (!n) {
+      centre.innerHTML = '<div class="empty">Letters appear here</div>';
+    } else {
+      const fixed = placed.filter(Boolean).length;
+      centre.innerHTML = `<b>${n}</b><span>${n === 1 ? 'letter' : 'letters'}</span>` +
+        (fixed ? `<span>${fixed} placed · ${n - fixed} left</span>` : '');
+    }
+
+    // Answer boxes
+    slotsEl.innerHTML = '';
+    const W = slotsEl.clientWidth || 340;
+    const size = Math.max(30, Math.min(44, Math.floor((W - (n - 1) * 6) / Math.max(n, 1))));
+    placed.forEach((ch, i) => {
+      const b = document.createElement('div');
+      b.className = 'slot' + (ch ? ' filled' : '') + (i === sel ? ' sel' : '');
+      b.style.width = size + 'px';
+      b.style.height = Math.round(size * 1.15) + 'px';
+      b.style.fontSize = Math.round(size * 0.55) + 'px';
+      b.textContent = ch;
+      b.addEventListener('click', () => onSlot(i));
+      slotsEl.appendChild(b);
+    });
+
+    hint.textContent = !n ? '' :
+      sel >= 0 ? 'Now tap a letter in the circle' :
+      'Know a letter’s position? Tap a box, then the letter';
+    hint.classList.remove('flash');
+    wheel.classList.toggle('armed', sel >= 0);
+
+    // Wheel tiles, keyed so they glide rather than jump
+    const live = new Set(pool.map(t => t.id));
+    for (const [id, el] of els) if (!live.has(id)) { el.remove(); els.delete(id); }
+    for (const t of pool) {
+      if (!els.has(t.id)) {
+        const el = document.createElement('div');
+        el.className = 'tile new';
+        el.textContent = t.ch;
+        el.addEventListener('click', () => onTile(t.id));
+        wheel.appendChild(el);
+        els.set(t.id, el);
+      }
+    }
     layout();
-    requestAnimationFrame(() => requestAnimationFrame(() =>
-      tiles.forEach(t => t.el.style.transition = '')));
+    for (const el of els.values()) {
+      if (el.classList.contains('new')) { void el.offsetWidth; el.classList.remove('new'); }
+    }
+
+    shuffleBtn.disabled = pool.length < 2;
+    save();
   }
 
   function layout() {
-    const n = tiles.length;
+    const n = pool.length;
     if (!n) return;
     const S = wheel.clientWidth;
     const c = (0.85 * 2 * Math.PI) / Math.max(n, 3);
-    const t = Math.min(S * 0.2, (c * S / 2) / (1 + c / 2));
-    const R = n === 1 ? 0 : S / 2 - t / 2 - 2;
-    tiles.forEach(tile => {
-      const a = -Math.PI / 2 + tile.slot * 2 * Math.PI / n;
+    const t = Math.min(S * 0.19, (c * S / 2) / (1 + c / 2));
+    const R = S / 2 - t / 2 - 2;
+    pool.forEach((tile, i) => {
+      const el = els.get(tile.id);
+      const a = -Math.PI / 2 + i * 2 * Math.PI / n;
       const x = S / 2 + R * Math.cos(a) - t / 2;
       const y = S / 2 + R * Math.sin(a) - t / 2;
-      tile.el.style.width = tile.el.style.height = t + 'px';
-      tile.el.style.fontSize = (t * 0.5) + 'px';
-      tile.el.style.transform = `translate(${x}px, ${y}px)`;
+      el.style.width = el.style.height = t + 'px';
+      el.style.fontSize = (t * 0.5) + 'px';
+      el.style.transform = `translate(${x}px, ${y}px)`;
     });
   }
 
-  function sequence() {
-    const s = [];
-    tiles.forEach(t => s[t.slot] = t.ch);
-    return s.join('');
+  function onSlot(i) {
+    input.blur();
+    if (placed[i]) {
+      pool.push({ id: nextId++, ch: placed[i] });   // return letter to the circle
+      placed[i] = '';
+      sel = i;
+    } else {
+      sel = (sel === i) ? -1 : i;
+    }
+    render();
+  }
+
+  function onTile(id) {
+    input.blur();
+    if (sel < 0 || placed[sel]) {
+      hint.textContent = 'Tap an empty box first, then the letter';
+      hint.classList.add('flash');
+      return;
+    }
+    const idx = pool.findIndex(t => t.id === id);
+    if (idx < 0) return;
+    placed[sel] = pool[idx].ch;
+    pool.splice(idx, 1);
+    sel = -1;
+    render();
   }
 
   function shuffle() {
-    const n = tiles.length;
+    const n = pool.length;
     if (n < 2) return;
-    const before = sequence();
-    const allSame = new Set(tiles.map(t => t.ch)).size === 1;
+    const before = pool.map(t => t.ch).join('');
+    const allSame = new Set(pool.map(t => t.ch)).size === 1;
     let tries = 0;
     do {
-      const slots = [...Array(n).keys()];
       for (let i = n - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [slots[i], slots[j]] = [slots[j], slots[i]];
+        [pool[i], pool[j]] = [pool[j], pool[i]];
       }
-      tiles.forEach((t, i) => t.slot = slots[i]);
       tries++;
-    } while (!allSame && sequence() === before && tries < 50);
+    } while (!allSame && pool.map(t => t.ch).join('') === before && tries < 50);
     layout();
+    save();
   }
 
   input.addEventListener('input', () => {
     const clean = input.value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 30);
     if (input.value !== clean) input.value = clean;
-    save(clean);
-    render(clean);
+    setLetters(clean, placed, pool);
+    render();
   });
   input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
   shuffleBtn.addEventListener('click', () => { input.blur(); shuffle(); });
-  clearBtn.addEventListener('click', () => { input.value = ''; save(''); render(''); input.focus(); });
-  window.addEventListener('resize', layout);
+  clearBtn.addEventListener('click', () => {
+    input.value = ''; sel = -1;
+    setLetters('', [], []);
+    render();
+    input.focus();
+  });
+  window.addEventListener('resize', render);
 
-  input.value = load();
-  render(input.value);
+  const s = load();
+  input.value = s.letters;
+  setLetters(s.letters, s.placed || [], (s.pool || []).map(ch => ({ id: nextId++, ch })));
+  render();
 
   if ('serviceWorker' in navigator) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController) location.reload();
+    });
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
   }
 </script>
